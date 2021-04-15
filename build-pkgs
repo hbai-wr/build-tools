@@ -1,0 +1,82 @@
+#!/bin/bash
+
+#
+# Copyright (c) 2021 Wind River Systems, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+#
+# Build needed packages from source plus meta data(version change, patches)
+#
+# This program is a wrapper around build-pkgs-deb
+#
+
+set -e
+
+BUILD_TYPES=(" std rt installer containers")
+BUILD_TYPE="std"
+export BUILD_PKGS_DIR=${MY_WORKSPACE}/${BUILD_TYPE}
+export BUILD_TOOLS_DIR=${MY_REPO}/build-tools
+export SOURCE_STX_DIR=${MY_REPO}/stx
+export STX_DISTRIBUTION="bullseye"
+export STX_ARCH="amd64"
+export _DEBUG="true"
+
+#1-REMOTE_BUILD(default) 0-LOCAL_BUILD
+BUILD_WAY=1
+
+# Including helper functions
+[ -e "${BUILD_TOOLS_DIR}/scripts/stx-utils" ] && . "${BUILD_TOOLS_DIR}/scripts/stx-utils"
+[ -e "${BUILD_TOOLS_DIR}/scripts/logecho.sh" ] && . "${BUILD_TOOLS_DIR}/scripts/logecho.sh"
+
+mkdir -p ${BUILD_PKGS_DIR}/.cache > /dev/null 2>&1
+export BUILD_CACHE_DIR=${BUILD_PKGS_DIR}/.cache
+cd ${BUILD_PKGS_DIR}
+
+usage () {
+    echo "Usage: "
+    echo "   Create source and binary Debian pkgs:"
+    echo "   build-pkgs [PACKAGE_NAME | PACKAGE LIST]"
+}
+
+case $# in
+    # Get all pkgs list from some places like centos stx did
+    # This may related with image type: std/rt stx layer:distro/container/flock/compiler
+    0) _pkgs_list="";;
+    1) _pkgs_list=$1;;
+    *) _pkgs_list="$@"
+esac
+
+for _target_pkg in ${_pkgs_list}; do
+
+    Echo_message "Build package ${_target_pkg}"
+
+    _pkg_dir=`get_stx_pkg_dir ${_target_pkg}`
+    # Any package to be built should has recipes in SOURCE_STX_DIR
+    [ -z "${_pkg_dir}" ] && {
+        Echo_error "No starlingX package ${_target_pkg} in STX source repo"
+        exit 1
+    }
+    # Prepare .dsc and source tar to build locally
+    _pkg_type=`get_stx_pkg_type ${_target_pkg} ${_pkg_dir}`
+    Echo_message "Package name:${_target_pkg} Source type:${_pkg_type}"
+
+    case "${_pkg_type}" in
+    "SDEB")
+        #call the STX plugin to prepare recipes for source deb
+        build-pkg-sdeb ${_target_pkg} ${_pkg_dir} ${BUILD_TYPE} ${BUILD_WAY}
+        ;;
+    "SEXT")
+        #call the STX plugin to prepare recipes for deb with external source
+        build-pkg-external ${_target_pkg} ${_pkg_dir} ${BUILD_TYPE} ${BUILD_WAY}
+        ;;
+    *)
+        Echo_error "Unknown source type for package $_target_pkg"
+	exit 1
+        ;;
+    esac
+
+done
+
+exit 0

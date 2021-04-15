@@ -1,0 +1,129 @@
+#!/bin/bash
+
+#
+# Copyright (c) 2021 Wind River Systems, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+#
+# stx layer utils to provide the basic functions for stx related things
+#
+
+set -e
+BUILD_TOOLS_DIR="${MY_REPO}/build-tools"
+[ -e "${BUILD_TOOLS_DIR}/scripts/logecho.sh" ] && . "${BUILD_TOOLS_DIR}/scripts/logecho.sh"
+
+DEB_PKG_DIRS="debian_pkg_dirs"
+#STX_LAYER_PATH=${MY_REPO}/stx
+STX_LAYER_PATH="/localdisk/designer/hbai/testdb/cgcs-root/starlingx-integ/"
+
+function get_stx_pkg_dir() {
+    local pkg_name=$1
+    local pkg_loc=""
+
+    if [ ! -f ${BUILD_CACHE_DIR}/${DEB_PKG_DIRS} ]; then
+        find ${STX_LAYER_PATH} -name "${DEB_PKG_DIRS}"  > ${BUILD_CACHE_DIR}/${DEB_PKG_DIRS}
+    fi
+    if [ -f ${BUILD_CACHE_DIR}/${DEB_PKG_DIRS} ]; then
+        for debdir in `cat ${BUILD_CACHE_DIR}/${DEB_PKG_DIRS}`; do
+            pkg_loc=`cat "${debdir}" | grep "/${pkg_name}$"`
+	    [ "x${pkg_loc}" != "x" ] && {
+                echo "${debdir%/*}/${pkg_loc}"
+	        return 0
+	    }
+	done
+    fi
+    echo ""
+}
+
+function get_stx_pkg_type() {
+    local pkg_name=$1
+    local pkg_path=$2
+
+    [ "x${pkg_path}" == "x" ] && {
+        Echo_error "No stx directory found for ${_pkg_name}"
+        exit 1
+    }
+
+    #Types: A. no OBS _service: source deb package matainced in OBS
+    #       B. has OBS _service: external git source
+    #       C. has OBS _service: external or local tar/source
+    if [ -f ${pkg_path}/debian/sdeb_path ]; then
+        echo "SDEB"
+    else
+        echo "SEXT"
+    fi
+}
+
+function get_stx_pkg_ver() {
+    local pkg_name=$1
+    local pkg_path=$2
+    local src_ver=""
+
+    if [ -f ${pkg_path}/debian/debv ]; then
+        src_ver=$(cat ${pkg_path}/debian/debv)
+    fi
+    echo $src_ver
+}
+
+function get_stx_tis_ver() {
+    local pkg_name=$1
+    local pkg_path=$2
+    local tis_ver=""
+
+    if [ -f ${pkg_path}/debian/build_sdeb.data ]; then
+        tis_ver=$(cat ${pkg_path}/debian/build_sdeb.data | grep 'TIS_PATCH_VER=' | awk -F"=" '{print $2}')
+    fi
+    echo $tis_ver
+}
+
+function get_stx_obsprj() {
+    if [ -f ${pkg_path}/sdeb_path ]; then
+        stx_obsprj=`head -1 ${pkg_path}/sdeb_path | grep '^obs:'`
+	if [ "x$stx_obsprj" != "x" ]; then
+            stx_obsprj=${stx_obsprj##*:}
+            stx_obsprj=${stx_obsprj%*/}
+	    echo $stx_obsprj
+        fi
+    fi
+    echo ""
+}
+
+function utest_main() {
+    local BUILD_CACHE_DIR=${MY_WORKSPACE}/cache/
+    local taget_loc="$MY_REPO/stx/integ/base/dnsmasq"
+
+
+    mkdir -p ${BUILD_CACHE_DIR} > /dev/null 2>&1
+
+    echo "UTEST of build-utils starting"
+    local pkg_loc=`get_stx_pkg_dir dnsmasq`
+    if [ "$pkg_loc" == '/localdisk/designer/hbai/testdb/cgcs-root/stx/integ/base/dnsmasq' ]; then
+        echo "........Test case 1 [pass]"
+    else
+        echo "........Test case 1 [fail]"
+    fi
+
+    local pkg_ver=`get_stx_pkg_ver dnsmasq ${pkg_loc}`
+    if [ "$pkg_ver" == '2.84' ]; then
+        echo "........Test case 2 [pass]"
+    else
+        echo "........Test case 2 [fail]"
+    fi
+
+    local tis_ver=`get_stx_tis_ver dnsmasq ${pkg_loc}`
+    if [ "$tis_ver" == 'a1' ]; then
+        echo "........Test case 3 [pass]"
+    else
+        echo "........Test case 3 [fail]"
+    fi
+
+    echo "UTEST of build-utils Done."
+}
+
+
+UTEST_BUILD_UTILS="no"
+if [ "$UTEST_BUILD_UTILS" = "yes" ]; then
+    utest_main
+fi

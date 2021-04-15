@@ -1,0 +1,223 @@
+#!/bin/bash
+
+#
+# Copyright (c) 2021 Wind River Systems, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+#
+set -e
+
+#BUILD_PKGS_DIR has been exported by build-pkgs
+#BUILD_CACHE_DIR has been exported by build-pkgs
+
+# Including helper functions
+[ -e "${BUILD_TOOLS_DIR}/scripts/stx-utils" ] && . "${BUILD_TOOLS_DIR}/scripts/stx-utils"
+[ -e "${BUILD_TOOLS_DIR}/scripts/logecho.sh" ] && . "${BUILD_TOOLS_DIR}/scripts/logecho.sh"
+
+usage () {
+    echo ""
+    echo "Usage: "
+    echo "   Create source and Binary debs:"
+    echo "   build-pkg-sdeb PACKAGE_NAME STX_DIR BUILD_TYPE BUILD_WAY"
+    echo ""
+}
+
+[ $# -lt 4 ] && {
+    usage
+    exit 1;
+}
+
+function check_bs_works() {
+    osc ls > ${BUILD_CACHE_DIR}/allobsprj
+    [ $? -ne 0 ] && {
+        Echo_error "client to stx builder is not ready, please check 'apiurl/user/pass' ~/.config/osc/oscrc"
+	return 1
+    }
+    return 0
+}
+
+function get_bs_prj() {
+    local pkg_name=$1
+    local bs_prj=`osc search --package ${pkg_name}`
+    local ret=`echo ${bs_prj} | grep '# Project' | grep '# Package'`
+    if [ "x$ret" != "x" ]; then
+        bs_prj=$(echo ${bs_prj##*$'\n'} | awk -F" " '{print $1}')
+    else
+        bs_prj=""
+    fi
+    echo ${bs_prj}
+}
+
+function branch_bs_pkg() {
+    local pkg_name=$1
+    local pkg_dir=$2
+    local bs_prj=$3
+
+    local branch_name=`echo ${HOME#*/} | sed 's/\//:/g'`
+    branch_name=${branch_name}":branches:"${bs_prj}
+    Echo_message "Need to create branch ${branch_name}"
+    if [ -f "${BUILD_CACHE_DIR}/allobsprj" ]; then
+        retprj=$(cat ${BUILD_CACHE_DIR}/allobsprj | grep ${branch_name})
+    else
+        retprj=$(osc ls | grep ${branch_name})
+    fi
+    if [ -z "${retprj}" ]; then
+        local branch_info=`osc branch $bs_prj $pkg_name`
+        local ret=`echo $branch_info | grep "A working copy of the branched package"`
+        if [ "x$ret" == "x" ]; then
+            Echo_error "Fail to branch package ${pkg_name} from ${bs_prj}"
+            exit 1
+        fi
+        branch_name=`echo $branch_info | grep "^osc co" | awk -F" " '{print $3}'`
+        Echo_info "Create branch $branch_name for package ${pkg_name}"
+    fi
+    rm -rf ${BUILD_PKGS_DIR}/${pkg_name}
+    osc co -c $branch_name $pkg_name > /dev/null 2>&1
+    [ $? -ne 0 ] && {
+        Echo_error "Fail to checkout $branch_name"
+        exit 1
+    }
+    cd ./${pkg_name} && rm -f *
+    exit 0
+}
+
+function add_bs_pkg() {
+    local pkg_name=$1
+    local pkg_dir=$2
+    local bs_prj=$3
+
+    local branch_info=`osc branch -c -n ${bs_prj} ${pkg_name}`
+    local ret=`echo ${branch_info} | grep "A working copy of the branched package"`
+    if [ "x$ret" == "x" ]; then
+        Echo_error "Fail to branch package ${pkg_name} from ${bs_prj}"
+        exit 1
+    fi
+    local branch_name=`echo ${branch_info} | grep "^osc co" | awk -F" " '{print $3}'`
+    Echo_info "Create branch $branch_name for package $pkg_name"
+    osc co -c $branch_name $pkg_name > /dev/null 2>&1
+    [ ! $? -eq 0 ] && {
+        Echo_error "Fail to checkout $branch_name"
+        exit 1
+    }
+    exit 0
+}
+
+function build_sdeb_locally() {
+    local _pkg_name=$1
+    local _pkg_dir=$2
+
+    #STX Layer recipe integration
+    mkdir -p ${BUILD_PKGS_DIR}/${_pkg_name} > /dev/null 2>&1
+    cd ${BUILD_PKGS_DIR}/${_pkg_name}
+    create_sdebpkg.sh --pkg-path ${_pkg_dir} --build-path ${BUILD_PKGS_DIR}/${_pkg_name}
+    if [ $? -eq 0 ];  then
+        cd ${BUILD_PKGS_DIR}/${_pkg_name}
+        sudo sbuild -d ${STX_DISTRIBUTION} --arch ${STX_ARCH} *.tis.dsc
+    else
+        Echo_error "Not ready for local sbuild"
+	exit 1
+    fi
+}
+
+function build_sdeb_remotely() {
+    local _pkg_name=$1
+    local _pkg_dir=$2
+
+    #check whether the channel from osc to obs is ready
+    check_bs_works
+
+    local _stx_prj=$(cat ${_pkg_dir}/debian/sdeb_path | awk -F'/' '{print $1}')
+    local _stb_prj=`get_bs_prj $_pkg_name`
+    Echo_message "Required STX container:${_stx_prj}, matched OSB project:${_stb_prj}"
+
+    local rc=1
+    if [ "x$_stb_prj" == "x" ]; then
+        if [ "x$(cat ${BUILD_CACHE_DIR}/.allobsprj | grep ${_stx_prj})" == "x" ]; then
+            Echo_error "No project ${_stx_prj} existed which defined in STX."
+	    exit 1
+        fi
+	rc=$(add_bs_pkg $_pkg_name $_pkg_dir $_stx_prj)
+    else
+        if [ "$_stx_prj" == "$_stb_prj" ]; then
+	    rc=$(branch_bs_pkg ${_pkg_name} ${_pkg_dir} ${_stb_prj})
+        else
+            Echo_error "Not consistent projects defined for $_pkg_name"
+	    exit 1
+        fi
+    fi
+    # construct the meta from stx for next building
+    create_sdebpkg.sh --pkg-path ${_pkg_dir} --build-path ./${_pkg_name}
+    if [ $? -eq 0 ]; then
+        cd ./${_pkg_name}
+        osc addremove .
+	osc commit -m "Updated"
+	Echo_message "Async build triggered, please check on browser or"
+	Echo_message "osc buildlog bullseye_standard_distro x86_64"
+    fi
+}
+
+_pkg_name=$1
+_pkg_dir=$2
+_build_type=$3
+_build_way=$4
+
+cd ${BUILD_PKGS_DIR}
+
+Echo_debug "In ${BUILD_PKGS_DIR}: package:${_pkg_name} stx dir:${_pkg_dir} type:${_build_type} way:${_build_way}"
+
+# Local building required
+case "$_build_way" in
+    0) build_sdeb_locally "$@";;
+    1) build_sdeb_remotely "$@";;
+    *) Echo_error "Unsupport build way"
+       exit 1;;
+esac
+
+exit 0
+
+function my_exit() {
+    echo "Handle during exit..."
+    #build-sdep-pkgs --std --tmpfs-clean
+    #build-rpms-parallel --rt --tmpfs-clean
+}
+
+function my_sigint() {
+    echo "build-pkgs-parallel sigint"
+    pkill -SIGABRT -P $BASHPID &> /dev/null
+    echo "build-pkgs-parallel waiting"
+    wait
+    echo "build-pkgs-parallel wait complete"
+
+}
+
+function my_sighup() {
+    echo "build-pkgs-parallel sighup"
+    pkill -SIGABRT -P $BASHPID &> /dev/null
+    echo "build-pkgs-parallel waiting"
+    wait
+    echo "build-pkgs-parallel wait complete"
+}
+
+function my_sigabrt() {
+    echo "build-pkgs-parallel sigabrt"
+    pkill -SIGABRT -P $BASHPID &> /dev/null
+    echo "build-pkgs-parallel waiting"
+    wait
+    echo "build-pkgs-parallel wait complete"
+}
+
+function my_sigterm() {
+    echo "build-pkgs-parallel sigterm"
+    pkill -SIGABRT -P $BASHPID &> /dev/null
+    echo "build-pkgs-parallel waiting"
+    wait
+    echo "build-pkgs-parallel wait complete"
+}
+
+trap my_exit EXIT
+trap my_sigint INT
+trap my_sighup HUP
+trap my_sigabrt ABRT
+trap my_sigterm TERM
