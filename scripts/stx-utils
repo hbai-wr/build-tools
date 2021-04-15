@@ -15,8 +15,7 @@ BUILD_TOOLS_DIR="${MY_REPO}/build-tools"
 [ -e "${BUILD_TOOLS_DIR}/scripts/logecho.sh" ] && . "${BUILD_TOOLS_DIR}/scripts/logecho.sh"
 
 DEB_PKG_DIRS="debian_pkg_dirs"
-#STX_LAYER_PATH=${MY_REPO}/stx
-STX_LAYER_PATH="/localdisk/designer/hbai/testdb/cgcs-root/starlingx-integ/"
+STX_LAYER_PATH="${SOURCE_STX_DIR}/"
 
 function get_stx_pkg_dir() {
     local pkg_name=$1

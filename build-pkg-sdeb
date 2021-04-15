@@ -153,8 +153,8 @@ function build_sdeb_remotely() {
         cd ./${_pkg_name}
         osc addremove .
 	osc commit -m "Updated"
-	Echo_message "Async build triggered, please check on browser or"
-	Echo_message "osc buildlog bullseye_standard_distro x86_64"
+	Echo_message "Building is triggered, please check on browser:${BS_WEB} or"
+	Echo_message "RUN: osc buildlog bullseye_standard_distro x86_64"
     fi
 }
 
