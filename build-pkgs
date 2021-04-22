@@ -37,29 +37,37 @@ cd ${BUILD_PKGS_DIR}
 usage () {
     echo "Usage: "
     echo "   Create source and binary Debian pkgs:"
-    echo "   build-pkgs [PACKAGE_NAME | PACKAGE LIST]"
+    echo "   build-pkgs [-h|--help|-l|--local] <PACKAGE_NAME | PACKAGES LIST>"
 }
 
-case $# in
-    # Get all pkgs list from some places like centos stx did
-    # This may related with image type: std/rt stx layer:distro/container/flock/compiler
-    0) _pkgs_list="";;
-    1) _pkgs_list=$1;;
-    *) _pkgs_list="$@"
-esac
+# read the options
+TEMP=`getopt -o lh --long local,help -n 'build-pkgs' -- "$@"`
+eval set -- "$TEMP"
+
+# extract options and their arguments into variables.
+while true ; do
+    case "$1" in
+        -h|--help) usage; shift ;;
+        -l|--local) BUILD_WAY=0 ; shift ;;
+        --) shift ; break ;;
+        *) echo "Invalid input!" ; exit 1 ;;
+    esac
+done
+
+_pkgs_list="$@"
 
 for _target_pkg in ${_pkgs_list}; do
 
     Echo_message "Build package ${_target_pkg}"
 
-    _pkg_dir=`get_stx_pkg_dir ${_target_pkg}`
+    _pkg_dir=`stx_get_pkg_dir ${_target_pkg}`
     # Any package to be built should has recipes in SOURCE_STX_DIR
     [ -z "${_pkg_dir}" ] && {
         Echo_error "No starlingX package ${_target_pkg} in STX source repo"
         exit 1
     }
     # Prepare .dsc and source tar to build locally
-    _pkg_type=`get_stx_pkg_type ${_target_pkg} ${_pkg_dir}`
+    _pkg_type=`stx_get_pkg_type ${_target_pkg} ${_pkg_dir}`
     Echo_message "Package name:${_target_pkg} Source type:${_pkg_type}"
 
     case "${_pkg_type}" in

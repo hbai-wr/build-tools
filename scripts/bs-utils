@@ -1,0 +1,268 @@
+#!/bin/bash
+
+#
+# Copyright (c) 2021 Wind River Systems, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+#
+# stx layer utils to provide the basic functions for stx related things
+#
+
+set -e
+
+OSCBIN="/usr/bin/osc"
+
+BUILD_TOOLS_DIR="${MY_REPO}/build-tools"
+[ -e "${BUILD_TOOLS_DIR}/scripts/logecho.sh" ] && . "${BUILD_TOOLS_DIR}/scripts/logecho.sh"
+TARGET_REPO="bullseye_standard_distro"
+
+function bs_init() {
+
+    OSCBIN=`which osc`
+    if [ -z "${OSCBIN}" ]; then
+        Echo_error "No client of build server installed"
+        exit 1
+    fi
+    if [ ! -x "${OSCBIN}" ]; then
+        Echo_error "No permission to run ${OSCBIN}"
+        exit 1
+    fi
+    export OSCBIN="$OSCBIN"
+
+    OBSUSER=$(grep "OBSUSER" ${HOME}/localrc | awk -F"=" '{print $2}')
+    if [ -n ${BSUSER} ]; then
+        export OBSHOME="home:"${OBSUSER}
+    else
+        Echo_error "There is not OBSUSER defined"
+    fi
+    export OBSUSER="$OBSUSER"
+
+    mkdir -p ${BUILD_CACHE_DIR}"/"${OBSUSER} > /dev/null 2>&1
+    if [ ! -f ${BUILD_CACHE_DIR}"/"${OBSUSER}"/prjs" ]; then
+	echo "will run osc ls "
+        ${OSCBIN} ls > ${BUILD_CACHE_DIR}"/"${OBSUSER}"/prjs"
+        [ $? -ne 0 ] && {
+            Echo_error "Build client is not ready, please check the config file ~/.config/osc/oscrc"
+            Echo_error "Important: apiurl, user and pass for project should be configured correctly"
+	    exit 1
+        }
+    fi
+    return 0
+}    
+
+function bs_get_prj() {
+    local pkg_name=$1
+    #example:matches for 'dnsmasq' in packages: # Project # Package home:hbai:branches:home:starlingx:distro dnsmasq
+    local bs_prj=`${OSCBIN} search --package ${pkg_name}`
+    local ret=`echo ${bs_prj} | grep '# Project' | grep '# Package'`
+    if [ -n "${ret}" ]; then
+        bs_prj=$(echo ${bs_prj##*$'\n'} | awk -F" " '{print $1}')
+    else
+        bs_prj=""
+    fi
+    echo ${bs_prj}
+}
+
+function bs_is_pkg_in_prj() {
+    local pkg_name=$1
+    local obs_prj=$2
+    local rc="no"
+
+    Echo_message "Try to search ${obs_prj}""|""$pkg_name"
+    local bs_prj=`${OSCBIN} search --csv --package ${pkg_name} > .prj`
+    while read line
+    do
+	if [ "$line" == "${obs_prj}""|""${pkg_name}" ]; then
+            Echo_message "Found the matched project ${obs_prj} for ${pkg_name}"
+	    rc="yes"
+	    break; 
+	fi
+    done < .prj
+    rm .prj > /dev/null 2>&1
+    echo $rc
+}
+
+if [ "${WITH_UNIT_TESTS}" == "yes" ]; then
+rc=""
+echo "is dnsmasq in home:hbai"
+rc=$(bs_is_pkg_in_prj "dnsmasq" "home:hbai")
+if [ $rc == "yes" ]; then
+    echo "OK"
+else
+    echo "Fail"
+fi
+
+echo "is parted in home:hbai"
+rc=$(bs_is_pkg_in_prj "parted" "home:hbai")
+if [ $rc == "no" ]; then
+    echo "OK"
+else
+    echo "Fail"
+fi
+
+echo "is parted in home:starlingx:distro"
+rc=$(bs_is_pkg_in_prj "parted" "home:starlingx:distro")
+if [ $rc == "yes" ]; then
+    echo "OK"
+else
+    echo "Fail"
+fi
+
+echo "is dnsmasq in home:starlingx:distro"
+rc=$(bs_is_pkg_in_prj "dnsmasq" "home:starlingx:distro")
+if [ $rc == "no" ]; then
+    echo "OK"
+else
+    echo "Fail"
+fi
+fi
+
+function bs_branch_exist() {
+    local src_prj=$1
+
+    Echo_message "Checkout wthether branch ${src_prj} exist"
+
+    local retprj=""
+    local PRJS_CACHE=${BUILD_CACHE_DIR}"/"${OBSUSER}"/prjs"
+    if [ -f ${PRJS_CACHE} ]; then
+        retprj=$(cat ${PRJS_CACHE} | grep ${src_prj})
+    else
+        retprj=$(${OSCBIN} ls | grep ${src_prj})
+    fi
+    if [ -z "${retprj}" ]; then
+        echo "no"
+    else
+        echo "yes"
+    fi
+}
+
+function bs_branch_pkg() {
+    local pkg_name=$1
+    local pkg_ver=$2
+    local pkg_dir=$3
+    local bs_prj=$4
+    local build_way=$5
+    
+    local branch_name="home:"${OBSUSER}":branches:"${bs_prj}
+    local is_banch_exist=$(bs_branch_exist ${branch_name})
+    if [ "${is_banch_exist}" == "no" ]; then
+        local branch_info=`${OSCBIN} branch ${bs_prj} ${pkg_name}`
+        local ret=`echo ${branch_info} | grep "A working copy of the branched package"`
+        if [ -z "$ret" ]; then
+            Echo_error "Fail to branch package ${pkg_name} from ${bs_prj}"
+            return 1
+        fi
+        local ck_prj=`echo ${branch_info} | grep "^osc co" | awk -F" " '{print $3}'`
+        Echo_info "Create branch ${ck_prj} for package ${pkg_name}"
+	if [ ! "${branch_name}" == "${ck_prj}" ]; then
+            Echo_warning "May wrong branch name?"
+	fi
+	branch_name=${ck_prj}
+    fi
+
+    #Clean current directory very carefully for checkout
+    local cur_pkg_dir=`pwd`
+    Echo_message "Check the current directory: ${cur_pkg_dir}"
+    rm -rf ${cur_pkg_dir}"/.osc" > /dev/null 2>&1
+    rm -rf ${cur_pkg_dir}"/*" > /dev/null 2>&1
+
+    ${OSCBIN} co -o . ${branch_name} ${pkg_name} > /dev/null 2>&1
+    [ $? -ne 0 ] && {
+        Echo_error "Fail to checkout ${pkg_name} from ${branch_name}"
+        return 1
+    }
+
+    local rc=`create_sdebpkg.sh --pkg-path ${pkg_dir} --build-path .`
+    if [ -n "${rc}" ]; then
+        Echo_message "rc from create_sdebpkg ${rc}"
+        eval $(echo "${rc}" | awk '{if(NF==3) printf("tisdsc=%s\norigtar=%s\ntisdiff=%s\n",$1,$2,$3);}')
+        Echo_message "create_sdebpkg created new files: ${tisdsc} ${origtar} ${tisdiff}"
+        Echo_message "bs_add_newpkg: branch way=${build_way}"
+        if [ "${build_way}" == "remote" ]; then
+            ${OSCBIN} add $tisdsc $origtar $tisdiff
+            [ $? -ne 0 ] && {
+                Echo_error "Fail to add recipes for ${pkg_name}"
+                return 1 
+            }
+            Echo_message "Commit new dsc to server, this will trigger remote building"
+            ${OSCBIN} commit -m "Added package ${pkg_name}"
+        else
+            Echo_message "Launch local build for package ${pkg_name} ${tisdsc} backstage"
+            #eval $(${OSCBIN} build --local ${TARGET_REPO} x86_64 ${tisdsc})
+            ${OSCBIN} build --trust-all-projects bullseye_standard_distro x86_64 ${tisdsc} > ${pkg_name}.log &
+        fi
+    fi
+    return 0
+}
+
+function bs_add_newpkg() {
+    local pkg_name=$1
+    local pkg_ver=$2
+    local pkg_dir=$3
+    local bs_prj=$4
+    local build_way=$5
+
+    #Clean current directory very carefully for checkout
+    local cur_pkg_dir=`pwd`
+    Echo_message "Check the current directory: ${cur_pkg_dir}"
+    rm -rf ${cur_pkg_dir}"/.osc" > /dev/null 2>&1
+    rm -rf ${cur_pkg_dir}"/*" > /dev/null 2>&1
+
+    local branch_name="home:"${OBSUSER}":branches:"${bs_prj}
+    local is_banch_exist=$(bs_branch_exist ${branch_name})
+    if [ "${is_branch_exist}" == "no" ]; then
+	Echo_message "${branch_name} does not exist, use branch -N"
+        local branch_info=`osc branch -N ${bs_prj} ${pkg_name}`
+        local ret=`echo ${branch_info} | grep "A working copy of the branched package"`
+        if [ -z "$ret" ]; then
+            Echo_error "Fail to branch package ${pkg_name} from ${bs_prj}"
+            return 1
+        fi
+        branch_name=`echo ${branch_info} | grep "^osc co" | awk -F" " '{print $3}'`
+        Echo_message "Create branch ${branch_name} for new package ${pkg_name}"
+
+        ${OSCBIN} co -o . ${branch_name} ${pkg_name} > /dev/null 2>&1
+        [ $? -ne 0 ] && {
+            Echo_error "Fail to checkout ${pkg_name} from ${branch_name}"
+            return 1
+        }
+    else
+        local ret=$(bs_is_pkg_in_prj "${pkg_name}" "${branch_name}")
+	if [ "$ret" == "no" ]; then
+	#branch project exists, but no this package
+            ${OSCBIN} init ${branch_name} > /dev/null 2>&1
+            ${OSCBIN} mkpac ${pkg_name} > /dev/null 2>&1
+            cd ./${pkg_name}
+	else
+            ${OSCBIN} co -o . ${branch_name} ${pkg_name} > /dev/null 2>&1
+            [ $? -ne 0 ] && {
+                Echo_error "Fail to checkout ${pkg_name} from ${branch_name}"
+                return 1
+            }
+	fi
+    fi
+
+    local rc=`create_sdebpkg.sh --pkg-path ${pkg_dir} --build-path .`
+    if [ -n "${rc}" ]; then
+	Echo_message "rc from create_sdebpkg ${rc}"
+	eval $(echo "${rc}" | awk '{if(NF==3) printf("tisdsc=%s\norigtar=%s\ntisdiff=%s\n",$1,$2,$3);}')
+	Echo_message "create_sdebpkg created new files: ${tisdsc} ${origtar} ${tisdiff}"
+	Echo_message "bs_add_newpkg: branch way=${build_way}"
+	if [ "${build_way}" == "remote" ]; then
+	    ${OSCBIN} add $tisdsc $origtar $tisdiff
+	    [ $? -ne 0 ] && {
+                Echo_error "Fail to add recipes for ${pkg_name}"
+	        return 1 
+	    }
+            Echo_message "Commit new dsc to server, this will trigger remote building"
+            ${OSCBIN} commit -m "Added package ${pkg_name}"
+        else
+            Echo_message "Launch local build for package ${pkg_name} ${tisdsc} backstage"
+	    #eval $(${OSCBIN} build --local ${TARGET_REPO} x86_64 ${tisdsc})
+	    ${OSCBIN} build --trust-all-projects bullseye_standard_distro x86_64 ${tisdsc} > ${pkg_name}.log &
+	fi
+    fi
+    return 0
+}

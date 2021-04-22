@@ -17,7 +17,7 @@ BUILD_TOOLS_DIR="${MY_REPO}/build-tools"
 DEB_PKG_DIRS="debian_pkg_dirs"
 STX_LAYER_PATH="${SOURCE_STX_DIR}/"
 
-function get_stx_pkg_dir() {
+function stx_get_pkg_dir() {
     local pkg_name=$1
     local pkg_loc=""
 
@@ -36,7 +36,7 @@ function get_stx_pkg_dir() {
     echo ""
 }
 
-function get_stx_pkg_type() {
+function stx_get_pkg_type() {
     local pkg_name=$1
     local pkg_path=$2
 
@@ -55,18 +55,18 @@ function get_stx_pkg_type() {
     fi
 }
 
-function get_stx_pkg_ver() {
+function stx_get_pkg_ver() {
     local pkg_name=$1
     local pkg_path=$2
     local src_ver=""
 
-    if [ -f ${pkg_path}/debian/debv ]; then
-        src_ver=$(cat ${pkg_path}/debian/debv)
+    if [ -f ${pkg_path}/debian/debver ]; then
+        src_ver=$(cat ${pkg_path}/debian/debver)
     fi
     echo $src_ver
 }
 
-function get_stx_tis_ver() {
+function stx_get_tis_ver() {
     local pkg_name=$1
     local pkg_path=$2
     local tis_ver=""
@@ -77,13 +77,17 @@ function get_stx_tis_ver() {
     echo $tis_ver
 }
 
-function get_stx_obsprj() {
-    if [ -f ${pkg_path}/sdeb_path ]; then
-        stx_obsprj=`head -1 ${pkg_path}/sdeb_path | grep '^obs:'`
-	if [ "x$stx_obsprj" != "x" ]; then
-            stx_obsprj=${stx_obsprj##*:}
-            stx_obsprj=${stx_obsprj%*/}
-	    echo $stx_obsprj
+function stx_get_obsprj() {
+    local pkg_name=$1
+    local pkg_path=$2
+
+    local deb_path=${pkg_path}"/debian/sdeb_path"
+    if [ -f ${deb_path} ]; then
+        local stx_obsprj=`head -1 ${deb_path} | grep '^obs:'`
+	if [ -n "${stx_obsprj}" ]; then
+            stx_obsprj=${stx_obsprj#*:}
+            stx_obsprj=${stx_obsprj%/*}
+	    echo ${stx_obsprj}
         fi
     fi
     echo ""
