@@ -63,7 +63,9 @@ get_deb_files () {
 
 update_deb_folder() {
     local src_dir=$1
-    local deb_dir=$2
+    local pkg_dir=$2
+
+    deb_dir=$pkg_dir/debian
 
     if [ -d $deb_dir/meta_data ]; then
         #echo "Update the debian folder ..."
@@ -82,6 +84,12 @@ update_deb_folder() {
                 (cd $src_dir; patch -p1 < $deb_dir/patches/$i >/dev/null 2>&1)
             done
         fi
+    else
+        if [[ $fmt_typ =~ "native" ]]; then
+            if [ -d $pkg_dir/files ]; then
+                cp -r $pkg_dir/files/* $src_dir/debian
+            fi
+        fi
     fi
 }
 
@@ -97,8 +105,12 @@ repack_deb_pkg () {
     local deb_tar=""
 
     #echo "Repackage ..."
-    bld_log=$(cd $src_dir/../;pwd)/$real_name-$major_ver.log
-    cd $src_dir;dpkg-buildpackage -us -uc -S -d > $bld_log 2>&1
+    bld_dir=$(cd $src_dir/../;pwd)
+    bld_log=$bld_dir/$real_name-$major_ver.log
+    # -S: don't build 
+    # -d: Do not check build dependencies and conflicts
+    # -nc: Do not clean the source tree, even add -d, but some packages(python-daemon) still fails to clean up sources due to missing dependence 
+    cd $src_dir;dpkg-buildpackage -nc -us -uc -S -d > $bld_log 2>&1
     if [ $? != 0 ]; then
         echo "Fail to build $real_name, log is at $bld_log"
         exit 1
@@ -110,16 +122,24 @@ repack_deb_pkg () {
     dsc_file=$real_name"_"$deb_ver.$tis_ver.dsc
 
     if [ $fmt_ver == "1.0" ]; then
-        tar_file=$real_name"_"$major_ver.orig.tar.gz
+        tar_file=$real_name"_"$major_ver.orig.tar
         deb_tar=$real_name"_"$deb_ver.$tis_ver.diff.gz
     else
         if [[ $fmt_typ =~ "native" ]]; then
-            tar_file=$real_name"_"$deb_ver.$tis_ver.tar.xz
+            tar_file=$real_name"_"$deb_ver.$tis_ver.tar
             deb_tar=""
         else
-            tar_file=$real_name"_"$major_ver.orig.tar.gz
+            tar_file=$real_name"_"$major_ver.orig.tar
             deb_tar=$real_name"_"$deb_ver.$tis_ver.debian.tar.xz
         fi
+    fi
+
+    if [ -f $bld_dir/$tar_file.gz ]; then
+        tar_file=$tar_file.gz
+    elif [ -f $bld_dir/$tar_file.xz ]; then
+        tar_file=$tar_file.xz
+    else
+        tar_file=$tar_file.bz2
     fi
     echo $dsc_file $tar_file $deb_tar
 }
@@ -193,6 +213,16 @@ else
     fi
 fi
 
+if [ ! -f $DEB_DIR/meta_data/changelog ]; then
+    echo "No \"changelog\" file in debian/meta_data"
+    exit 1
+fi
+
+if [ ! -f $DEB_DIR/meta_data/source/format ]; then
+    echo "No \"format\" file in debian/meta_data/source/format"
+    exit 1
+fi
+
 MAJOR_VER=${DEB_VER%-*}
 #some packages version like 2.1.12-stable-1(libevent), the folder is libevent-2.1.12-stable
 MINOR_VER=${DEB_VER##*-}
@@ -223,6 +253,15 @@ if [ -f $DEB_DIR/dl_path ]; then
     fi
     (cd $BUILD_PATH;tar czf $REAL_NAME"_"$MAJOR_VER.orig.tar.gz $FULL_NAME; rm -r $TAR_FILE)
     SRC_DIR="$BUILD_PATH/$FULL_NAME"
+elif [ -f $DEB_DIR/git_path ];then
+    source $DEB_DIR/git_path
+    SRC=`basename $SRC_DIR`
+    if [ -f $BUILD_PATH/$SRC ]; then
+        rm -r $BUILD_PATH/$SRC
+    fi
+    (cd $BUILD_PATH;cp -r $SRC_DIR .)
+    SRC_DIR="$BUILD_PATH/$SRC"
+
 elif [ -f $DEB_DIR/src_path ]; then
     SRC_DIR=`cat $DEB_DIR/src_path`
     if [ ! -d $PKG_PATH/$SRC_DIR ]; then
@@ -247,7 +286,7 @@ else
         DEB_FILES=(${DEB_FILES// / })
         SRC_DIR="$BUILD_PATH/${DEB_FILES[0]}"
         #FIXME, force removing the sign file
-        (cd $BUILD_PATH; rm *.orig.tar.gz.asc)
+        (cd $BUILD_PATH; rm -f *.orig.tar.gz.asc)
     else
         echo "No \"$REAL_NAME-$DEB_VER\", the available versions are:"
         echo "$SUPPORTED_VERS"
@@ -255,7 +294,7 @@ else
     fi
 fi
 
-update_deb_folder "$SRC_DIR" "$DEB_DIR"
+update_deb_folder "$SRC_DIR" "$PKG_PATH"
 repack_deb_pkg $REAL_NAME $FILE_VER $MAJOR_VER "$DEB_DIR/meta_data/source/format" "$SRC_DIR"
 
 exit 0

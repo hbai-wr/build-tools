@@ -56,9 +56,12 @@ done
 
 _pkgs_list="$@"
 
+Echo_message "Package builder running......"
+
 for _target_pkg in ${_pkgs_list}; do
 
-    Echo_message "Build package ${_target_pkg}"
+    Echo_message "================================="
+    Echo_message "Build ${_target_pkg}"
 
     _pkg_dir=`stx_get_pkg_dir ${_target_pkg}`
     # Any package to be built should has recipes in SOURCE_STX_DIR
@@ -66,25 +69,8 @@ for _target_pkg in ${_pkgs_list}; do
         Echo_error "No starlingX package ${_target_pkg} in STX source repo"
         exit 1
     }
-    # Prepare .dsc and source tar to build locally
-    _pkg_type=`stx_get_pkg_type ${_target_pkg} ${_pkg_dir}`
-    Echo_message "Package name:${_target_pkg} Source type:${_pkg_type}"
-
-    case "${_pkg_type}" in
-    "SDEB")
-        #call the STX plugin to prepare recipes for source deb
-        build-pkg-sdeb ${_target_pkg} ${_pkg_dir} ${BUILD_TYPE} ${BUILD_WAY}
-        ;;
-    "SEXT")
-        #call the STX plugin to prepare recipes for deb with external source
-        build-pkg-external ${_target_pkg} ${_pkg_dir} ${BUILD_TYPE} ${BUILD_WAY}
-        ;;
-    *)
-        Echo_error "Unknown source type for package $_target_pkg"
-	exit 1
-        ;;
-    esac
-
+    # Prepare .dsc and source tar to build
+    build-pkg-deb ${_target_pkg} ${_pkg_dir} ${BUILD_WAY}
 done
 
 exit 0

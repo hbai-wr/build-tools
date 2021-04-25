@@ -12,6 +12,8 @@ set -e
 #BUILD_PKGS_DIR has been exported by build-pkgs
 #BUILD_CACHE_DIR has been exported by build-pkgs
 DEFAULT_DISTRO_PRJ="home:starlingx:distro"
+UP_MAIN_REPO="bullseye_standard_distro"
+ARCH="x86_64"
 
 # Including helper functions
 [ -e "${BUILD_TOOLS_DIR}/scripts/stx-utils" ] && . "${BUILD_TOOLS_DIR}/scripts/stx-utils"
@@ -22,11 +24,11 @@ usage () {
     echo ""
     echo "Usage: "
     echo "   Create source and Binary debs:"
-    echo "   build-pkg-sdeb <PACKAGE_NAME> <STX_DIR> <BUILD_TYPE> <BUILD_WAY>"
+    echo "   build-pkg-sdeb <PACKAGE_NAME> <STX_DIR> <BUILD_WAY>"
     echo ""
 }
 
-[ $# -ne 4 ] && {
+[ $# -ne 3 ] && {
     usage
     exit 1;
 }
@@ -41,13 +43,13 @@ function build_pkg() {
     #check whether the builder client is ready
     bs_init
 
-    #This must be taken as the master for the pacakge may exists more than one prj
+    #This must be taken as the master for the pacakge may exists in more than one prjs
     local _stx_prj=$(stx_get_obsprj ${_pkg_name} ${_pkg_dir})
     if [ -z ${_stx_prj} ]; then
-        Echo_error "The package's obs project must be defined in STX"
-	exit 1
+        Echo_warning "The package's obs project must be defined in STX"
+	_stx_prj=${DEFAULT_DISTRO_PRJ}
     fi
-    ret=$(bs_is_pkg_in_prj ${_pkg_name} ${_stx_prj})
+    ret=$(bs_pkg_in_prj ${_pkg_name} ${_stx_prj})
     if [ $ret == "yes" ]; then
         Echo_message "Need to branch ${_pkg_name} in ${_stx_prj}"
 	rc=$(bs_branch_pkg "${_pkg_name}" "${_pkg_ver}" "${_pkg_dir}" "${_stx_prj}" "${_build_way}")
@@ -55,29 +57,26 @@ function build_pkg() {
         Echo_message "Need to create ${_pkg_name} in ${_stx_prj}"
 	rc=$(bs_add_newpkg "${_pkg_name}" "${_pkg_ver}" "${_pkg_dir}" "${_stx_prj}" "${_build_way}")
     fi
-    Echo_message "You can check the buildlog under "${BUILD_PKGS_DIR}"/"${_pkg_name}-${_pkg_ver}"/builder.log"
 }
 
 _pkg_name=$1
 _pkg_dir=$2
-_build_type=$3
-_build_way=$4
+_build_way=$3
 
 _pkg_ver=$(stx_get_pkg_ver ${_pkg_name} ${_pkg_dir})
-if [ -n ${_pkg_ver} ]; then
-    PKG_DIR=${BUILD_PKGS_DIR}"/"${_pkg_name}"-"${_pkg_ver}
-else
-    PKG_DIR=${BUILD_PKGS_DIR}"/"${_pkg_name}
-fi
-mkdir -p ${PKG_DIR} > /dev/null 2>&1
-cd ${PKG_DIR}
+rm -rf ${BUILD_PKGS_DIR}"/"${_pkg_name} > /dev/null 2>&1
+cd ${BUILD_PKGS_DIR}
 
-Echo_debug "In ${BUILD_PKGS_DIR}: package:${_pkg_name} stx dir:${_pkg_dir} type:${_build_type} way:${_build_way}"
+if [ ${_build_way} -eq 0 ]; then
+    Echo_message "Package:${_pkg_name} STX path:${_pkg_dir} Local build"
+else
+    Echo_message "Package:${_pkg_name} STX path:${_pkg_dir} Remote build"
+fi
 
 # Local building required
 case "$_build_way" in
-    0) build_pkg "${_pkg_name}" "${_pkg_ver}" "${_pkg_dir}" "remote";;
-    1) build_pkg "${_pkg_name}" "${_pkg_ver}" "${_pkg_dir}" "local" ;;
+    0) build_pkg "${_pkg_name}" "${_pkg_ver}" "${_pkg_dir}" "local";;
+    1) build_pkg "${_pkg_name}" "${_pkg_ver}" "${_pkg_dir}" "remote" ;;
     *) Echo_error "Not support"
        exit 1;;
 esac
