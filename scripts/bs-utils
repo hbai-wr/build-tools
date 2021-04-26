@@ -224,8 +224,7 @@ function bs_branch_pkg() {
 	    fi
         else
             Echo_message "Launch local build for package ${pkg_name} in backstage"
-            ${OSCBIN} build --trust-all-projects ${UP_MAIN_REPO} ${ARCH} ${tisdsc} > ${pkg_name}.log &
-	    Echo_message "Check the build log ${pkg_name}.log"
+            ${OSCBIN} build --trust-all-projects ${UP_MAIN_REPO} ${ARCH} ${tisdsc} >&3
         fi
     fi
     return 0
@@ -310,8 +309,8 @@ function bs_add_newpkg() {
 	    fi
         else
             Echo_message "Launch local build for package ${pkg_name} in backstage"
-	    ${OSCBIN} build --local-package ${UP_MAIN_REPO} ${ARCH} ${tisdsc} > ${pkg_name}.log &
-	    Echo_message "Check the build log ${pkg_name}.log"
+            ${OSCBIN} build --local-package ${UP_MAIN_REPO} ${ARCH} ${tisdsc} >&3
+            Echo_message "Check the build log ${pkg_name}.log"
 	fi
     fi
     return 0
