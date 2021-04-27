@@ -33,14 +33,12 @@ get_deb_files () {
     local real_name=$1
     local major_ver=$2
     local file_ver=$3
-    local deb_fmt=$4
+    local fmt_ver=$4
+    local fmt_typ=$5
     local dsc_file=""
     local src_dir=""
     local tar_file=""
     local deb_tar=""
-
-    fmt_ver=`cat $deb_fmt | awk '{print $1}'`
-    fmt_typ=`cat $deb_fmt | awk '{print $2}'`
 
     dsc_file=$real_name"_"$file_ver.dsc
     src_dir=$real_name-$major_ver
@@ -64,8 +62,12 @@ get_deb_files () {
 update_deb_folder() {
     local src_dir=$1
     local pkg_dir=$2
+    local fmt_ver=$3
+    local fmt_typ=$4
 
     deb_dir=$pkg_dir/debian
+    bld_dir=$(cd $src_dir/../;pwd)
+    do_patch_log=$bld_dir/do_patch.log
 
     if [ -d $deb_dir/meta_data ]; then
         #echo "Update the debian folder ..."
@@ -73,32 +75,59 @@ update_deb_folder() {
         cp -r $deb_dir/meta_data/* $src_dir/debian
     fi
 
-    deb_fmt="$deb_dir/meta_data/source/format"
-    fmt_ver=`cat $deb_fmt | awk '{print $1}'`
-    fmt_typ=`cat $deb_fmt | awk '{print $2}'`
-
-    if [ $fmt_ver == "1.0" ]; then
-        if [ -f $deb_dir/patches/series ]; then
+    if [ -f $deb_dir/patches/series ]; then
+        if [ $fmt_ver == "1.0" ]; then
             for i in `cat $deb_dir/patches/series`; do
                 #echo "Apply patch $i"
-                (cd $src_dir; patch -p1 < $deb_dir/patches/$i >/dev/null 2>&1)
+                cd $src_dir; patch -p1 < $deb_dir/patches/$i > $do_patch_log 2>&1
+                if [ $? != 0 ]; then
+                    echo "Fail to apply patch $i, log is at $do_patch_log"
+                    exit 1
+                fi
             done
-        fi
-    else
-        if [[ $fmt_typ =~ "native" ]]; then
-            if [ -d $pkg_dir/files ]; then
-                cp -r $pkg_dir/files/* $src_dir/debian
-            fi
+        elif [[ $fmt_typ =~ "quilt" ]]; then
+            for i in `cat $deb_dir/patches/series`; do
+                if [ ! -f $deb_dir/patches/$i ]; then
+                    echo "No patch $i under $deb_dir/patches"
+                    exit 1
+                fi
+                cp $deb_dir/patches/$i $src_dir/debian/patches
+                echo $i >> $src_dir/debian/patches/series
+            done
+        else
+            echo "deb format is \"3.0 native\", can't apply patches"
+            exit 1
         fi
     fi
+
+    if [[ $fmt_typ =~ "native" ]]; then
+        if [ -d $pkg_dir/files ]; then
+                cp -r $pkg_dir/files/* $src_dir/debian
+        fi
+    fi
+
+    if [ -d $deb_dir/deb_patches ]; then
+        if [ -f $deb_dir/deb_patches/series ]; then
+            for i in `cat $deb_dir/deb_patches/series`; do
+                #echo "Apply patch $i"
+                cd $src_dir; patch -p1 < $deb_dir/deb_patches/$i >$do_patch_log 2>&1
+                if [ $? != 0 ]; then
+                    echo "Fail to apply patch $i, log is at $do_patch_log"
+                    exit 1
+                fi
+            done
+        fi
+    fi
+    rm -f $do_patch_log
 }
 
 repack_deb_pkg () {
     local real_name=$1
     local deb_ver=$2
     local major_ver=$3
-    local deb_fmt=$4
-    local src_dir=$5
+    local fmt_ver=$4
+    local fmt_typ=$5
+    local src_dir=$6
     local tis_ver="tis"
     local dsc_file=""
     local tar_file=""
@@ -116,9 +145,6 @@ repack_deb_pkg () {
         exit 1
     fi
     
-    fmt_ver=`cat $deb_fmt | awk '{print $1}'`
-    fmt_typ=`cat $deb_fmt | awk '{print $2}'`
-
     dsc_file=$real_name"_"$deb_ver.$tis_ver.dsc
 
     if [ $fmt_ver == "1.0" ]; then
@@ -219,8 +245,11 @@ if [ ! -f $DEB_DIR/meta_data/changelog ]; then
 fi
 
 if [ ! -f $DEB_DIR/meta_data/source/format ]; then
-    echo "No \"format\" file in debian/meta_data/source/format"
-    exit 1
+    FMT_VER="1.0"
+    FMT_TYP=""
+else
+    FMT_VER=`cat $DEB_DIR/meta_data/source/format | awk '{print $1}'`
+    FMT_TYP=`cat $DEB_DIR/meta_data/source/format | awk '{print $2}'`
 fi
 
 MAJOR_VER=${DEB_VER%-*}
@@ -276,7 +305,7 @@ else
     SUPPORTED_VERS=`apt-cache madison $REAL_NAME | grep "Sources" | awk -F"|" '{print $2}'`
     echo "$SUPPORTED_VERS" | grep "$DEB_VER" >/dev/null 2>&1
     if [ $? == 0 ]; then
-        DEB_FILES=`get_deb_files $REAL_NAME $MAJOR_VER $FILE_VER "$DEB_DIR/meta_data/source/format"`
+        DEB_FILES=`get_deb_files $REAL_NAME $MAJOR_VER $FILE_VER "$FMT_VER" "$FMT_TYP"`
         if [ "$DEB_FILES" != "" ]; then
             #echo "Removing the existing sources codes ..."
             (cd $BUILD_PATH; rm -rf $DEB_FILES)
@@ -294,7 +323,7 @@ else
     fi
 fi
 
-update_deb_folder "$SRC_DIR" "$PKG_PATH"
-repack_deb_pkg $REAL_NAME $FILE_VER $MAJOR_VER "$DEB_DIR/meta_data/source/format" "$SRC_DIR"
+update_deb_folder "$SRC_DIR" "$PKG_PATH" "$FMT_VER" "$FMT_TYP"
+repack_deb_pkg $REAL_NAME $FILE_VER $MAJOR_VER "$FMT_VER" "$FMT_TYP" "$SRC_DIR"
 
 exit 0

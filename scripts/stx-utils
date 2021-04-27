@@ -19,13 +19,15 @@ STX_LAYER_PATH="${SOURCE_STX_DIR}/"
 
 function stx_get_pkg_dir() {
     local pkg_name=$1
+    local iscache=$2
     local pkg_loc=""
 
-    if [ ! -f ${BUILD_CACHE_DIR}/${DEB_PKG_DIRS} ]; then
-        find ${STX_LAYER_PATH} -name "${DEB_PKG_DIRS}"  > ${BUILD_CACHE_DIR}/${DEB_PKG_DIRS}
+    local cache_pkg_dir=${BUILD_CACHE_DIR}"/"${DEB_PKG_DIRS}
+    if [ "${iscache}" == "no" ]; then
+        find ${STX_LAYER_PATH} -name "${DEB_PKG_DIRS}"  > ${cache_pkg_dir}
     fi
-    if [ -f ${BUILD_CACHE_DIR}/${DEB_PKG_DIRS} ]; then
-        for debdir in `cat ${BUILD_CACHE_DIR}/${DEB_PKG_DIRS}`; do
+    if [ -f ${cache_pkg_dir} ]; then
+        for debdir in `cat ${cache_pkg_dir}`; do
             pkg_loc=`cat "${debdir}" | grep "/${pkg_name}$"`
 	    [ "x${pkg_loc}" != "x" ] && {
                 echo "${debdir%/*}/${pkg_loc}"
